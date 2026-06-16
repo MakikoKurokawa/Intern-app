@@ -128,7 +128,7 @@ def calculate_numerology(birth_date_str):
 def get_db_connection():
     return sqlite3.connect(DB_FILE)
 
-# 💡 【絨毯爆撃】404エラーを回避するため、Googleに存在する新旧すべてのモデル候補を自動で総当たりする関数
+# 💡 タイムアウトの上限を「60秒」まで大幅に引き延ばしてじっと待つ関数
 def ask_gemini(prompt_text):
     my_key = os.getenv("GEMINI_API_KEY", "")
     if not my_key:
@@ -136,7 +136,6 @@ def ask_gemini(prompt_text):
         
     import urllib.request
     
-    # 💥 Google AI Studioで使われる可能性がある新旧モデル名とバージョンの全組み合わせリスト
     models_to_try = [
         ("v1", "gemini-2.5-flash"),
         ("v1beta", "gemini-2.5-flash"),
@@ -155,22 +154,21 @@ def ask_gemini(prompt_text):
     
     errors = []
     
-    # 繋がるURLが見つかるまで上から順番にひたすらアタックします！
     for version, model in models_to_try:
         target_url = f"https://generativelanguage.googleapis.com/{version}/models/{model}:generateContent?key={my_key}"
         headers = {"Content-Type": "application/json"}
         req = urllib.request.Request(target_url, data=json.dumps(data).encode("utf-8"), headers=headers, method="POST")
         
         try:
-            with urllib.request.urlopen(req, timeout=10) as res:
+            # 💡 timeoutを 10秒 から 60秒 へ延長！激重のGoogleが返事をするまでじっと待ちます
+            with urllib.request.urlopen(req, timeout=60) as res:
                 response_body = res.read().decode("utf-8")
                 res_json = json.loads(response_body)
                 return res_json["candidates"][0]["content"]["parts"][0]["text"]
         except Exception as e:
             errors.append(f"{model}({version}): {str(e)}")
-            continue # ダメなら即座に次のモデルへ！
+            continue
             
-    # 全滅した場合のみエラーを表示（デバッグ用に試したモデル履歴を出す）
     error_details = "\n".join(errors)
     return f"⚠️ 申し訳ありません。Google AIのすべてのモデル窓口への接続に失敗しました。\n\n【試行ログ】:\n{error_details}"
 
@@ -354,7 +352,8 @@ with main_tab2:
             st.subheader("🤖 AI事前プロファイリング")
             
             if st.button("AI相性診断＆事前アドバイスを生成", key="pre_ai_btn"):
-                with st.spinner("Googleに存在する全AIモデルへ自動アタック中..."):
+                # 💡 メッセージをじっくり待つ仕様に変更
+                with st.spinner("Geminiが回答するまで、最大60秒間じっと粘り強く待機中..."):
                     my_fortune_str = ", ".join([f"{k}:{v}" for k, v in MY_PROFILE["five_animals"].items()])
                     c_fortune_str = ", ".join([f"{k}:{v}" for k, v in c_fortune.items()])
                     fortune_note = "※候補者の占い情報が『未設定』の場合は、経歴や自己PR、求める8項目を中心とした面接対策を重点的に提案してください。"

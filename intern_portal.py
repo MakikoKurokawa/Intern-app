@@ -33,7 +33,7 @@ MY_PROFILE = {
 # 12キャラのリスト
 ANIMAL_LIST = ["未設定", "チータ", "狼", "黒ひょう", "ライオン", "虎", "たぬき", "コアラ", "ゾウ", "ひつじ", "ペガサス", "猿", "こじか"]
 
-# 📝 面談メモ用テンプレート（初期状態）
+# 📝 面談メモ用テンプレート
 MEMO_TEMPLATE = """=========================================
 【1】基本情報・勤務条件
 =========================================
@@ -102,15 +102,20 @@ def init_db():
     try: cursor.execute("ALTER TABLE candidates ADD COLUMN animals_json TEXT")
     except sqlite3.OperationalError: pass
 
+    # 💡 【機能拡張】事前プロファイリング結果を保存するための列 (pre_profile_report) を追加
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS candidate_notes (
         candidate_id INTEGER PRIMARY KEY,
         raw_interview_memo TEXT,
         ai_report_json TEXT,
         final_judgment_memo TEXT,
+        pre_profile_report TEXT,
         FOREIGN KEY(candidate_id) REFERENCES candidates(id) ON DELETE CASCADE
     )
     """)
+    try: cursor.execute("ALTER TABLE candidate_notes ADD COLUMN pre_profile_report TEXT")
+    except sqlite3.OperationalError: pass
+    
     conn.commit()
     conn.close()
 
@@ -166,16 +171,14 @@ def ask_gemini(prompt_text):
             
     return f"⚠️ 申し訳ありません。Google AIの全モデルへの接続に失敗しました。"
 
-# 💡 画面切り替えバグ対策のセッション管理
 if "selected_candidate_id" not in st.session_state:
     st.session_state["selected_candidate_id"] = None
-if "current_tab" not in st.session_state:
-    st.session_state["current_tab"] = "📋 候補者一覧・登録"
+if "active_tab_index" not in st.session_state:
+    st.session_state["active_tab_index"] = 0
 
 # ==========================================
-# 3. Streamlit UI 構築 (現在のタブをプログラム側で制御できるように修正)
+# 3. Streamlit UI 構築
 # ==========================================
-# ラジオボタンや選択イベントを使わず、Stateとシンクロするキーを設定してバグを根絶
 active_tab = st.radio("メニュー切り替え", ["📋 候補者一覧・登録", "🔎 面接・評価（詳細画面）"], horizontal=True, label_visibility="collapsed")
 
 # --- タブ1: 候補者一覧・登録 ---
@@ -242,10 +245,10 @@ if active_tab == "📋 候補者一覧・登録":
             with c_col3: st.write(row['university'])
             with c_col4: st.caption(f"【{row['status']}】 {row['interview_date'] or ''}")
             with c_col5:
-                # 💡 【バグ修正】ボタンを押したら即時セッションに記録して全体リロードさせてタブ移動させる
                 if st.button("詳細・面接へ 🔍", key=f"det_{row['id']}"):
                     st.session_state["selected_candidate_id"] = row['id']
-                    st.components.v1.html("<script>window.parent.document.querySelector('input[value=\"🔎 面接・評価（詳細画面）\"]').click();</script>", height=0)
+                    st.session_state["active_tab_index"] = 1
+                    st.warning("🔄 データを読み込みました！上のメニューの「🔎 面接・評価（詳細画面）」タブを押してください。")
                     st.rerun()
     else:
         st.info("現在登録されている候補者は居ません。")
@@ -257,7 +260,7 @@ if active_tab == "🔎 面接・評価（詳細画面）":
     conn.close()
     
     if not candidates_list:
-        st.info("候補者が登録されていません。まずは候補者一覧から登録するか詳細ボタンを押してください。")
+        st.info("候補者が登録されていません。「📋 候補者一覧・登録」から詳細ボタンを押してください。")
     else:
         c_options = {c[1]: c[0] for c in candidates_list}
         default_idx = 0
@@ -285,6 +288,8 @@ if active_tab == "🔎 面接・評価（詳細画面）":
         raw_memo = notes_data[1] if (notes_data and notes_data[1]) else MEMO_TEMPLATE
         ai_report = notes_data[2] if notes_data else ""
         final_memo = notes_data[3] if notes_data else ""
+        # 💡 保存された事前プロファイリング結果を読み出す（なければ空っぽ）
+        saved_pre_profile = notes_data[4] if (notes_data and len(notes_data) > 4) else ""
         
         if animals_json:
             c_fortune = json.loads(animals_json)
@@ -293,10 +298,10 @@ if active_tab == "🔎 面接・評価（詳細画面）":
             
         c_num = calculate_numerology(birth_date)
         
-        sub_tab1, sub_tab2, sub_tab3 = st.tabs(["⏮️ 面接前（準備・占い・相性）", "⏺️ 面接中（リアルタイム）", "⏭️ 面接後（評価レポート）"])
+        sub_tabs = st.tabs(["⏮️ 面接前（準備・占い・相性）", "⏺️ 面接中（リアルタイム）", "⏭️ 面接後（評価レポート）"])
         
         # --- 子タブ1: 面接前 ---
-        with sub_tab1:
+        with sub_tabs[0]:
             col_info, col_fortune = st.columns(2)
             with col_info:
                 st.subheader("基本情報")
@@ -351,13 +356,12 @@ if active_tab == "🔎 面接・評価（詳細画面）":
             st.divider()
             st.subheader("🤖 AI事前プロファイリング")
             
-            if st.button("AI相性診断＆事前アドバイスを生成（各300字制限・メモ自動追加）", key="pre_ai_btn"):
+            if st.button("AI相性診断＆事前アドバイスを生成（各300字制限・自動保存）", key="pre_ai_btn"):
                 with st.spinner("Geminiが300字前後で凝縮プロファイリングを生成中..."):
                     my_fortune_str = ", ".join([f"{k}:{v}" for k, v in MY_PROFILE["five_animals"].items()])
                     c_fortune_str = ", ".join([f"{k}:{v}" for k, v in c_fortune.items()])
                     fortune_note = "※候補者の占い情報が『未設定』の場合は、経歴や自己PR、求める8項目を中心とした面接対策を重点的に提案してください。"
                     
-                    # 💡 文字数を各300文字に制限する指示を追加
                     prompt = f"""
                     動物占い（5アニマル）と数秘術のデータに基づき、プロファイルを行います。
                     面接官「マキコさん」と「候補者」の相性を分析してください。
@@ -376,7 +380,7 @@ if active_tab == "🔎 面接・評価（詳細画面）":
 
                     【超重要ルール】
                     以下の4つのセクション構成で出力してください。
-                    ただし、各セクションの解説は必ず「300文字前後」に要約して、端的に箇条書きなども交えて分かりやすくまとめてください。
+                    ただし、各セクションの解説は必ず「300文字前後」に要約して、端的に箇流書きなども交えて分かりやすくまとめてください。
                     4の質問候補は、そのまま口頭で言えるマキコさんのフランクな口調にしてください。
 
                     1. 【候補者の基本特徴・強みの仮説】
@@ -385,49 +389,56 @@ if active_tab == "🔎 面接・評価（詳細画面）":
                     4. 【本日ぶつけるべき深掘り質問候補3選】
                     """
                     ai_res = ask_gemini(prompt)
-                    st.session_state[f"pre_ai_{c_id}"] = ai_res
+                    saved_pre_profile = ai_res # 画面表示用変数を上書き
                     
-                    # 💡 【新機能】生成された「コミュニケーション攻略法」と「質問3選」を引っこ抜いて面接メモの末尾に自動追記する
+                    # 💡 【自動合体機能】質問と攻略法を切り取って面談メモへ合体
+                    new_memo_content = raw_memo
                     try:
                         strategy_part = ai_res.split("3. 【面接官マキコとのコミュニケーション攻略法】")[1].split("4. 【本日ぶつけるべき深掘り質問候補3選】")[0].strip()
                         questions_part = ai_res.split("4. 【本日ぶつけるべき深掘り質問候補3選】")[1].strip()
-                        
                         append_text = f"\n\n=========================================\n🚨 AI事前カンペ（自動挿入）\n=========================================\n■ コミュニケーション攻略法:\n{strategy_part}\n\n■ ぶつけるべき質問3選:\n{questions_part}"
-                        
-                        # 重複して追記されないようにチェック
                         if "🚨 AI事前カンペ（自動挿入）" not in raw_memo:
                             new_memo_content = raw_memo + append_text
-                            conn = get_db_connection()
-                            conn.execute("""
-                            INSERT OR REPLACE INTO candidate_notes (candidate_id, raw_interview_memo, ai_report_json, final_judgment_memo)
-                            VALUES (?, ?, ?, ?)
-                            """, (c_id, new_memo_content, ai_report, final_memo))
-                            conn.commit()
-                            conn.close()
-                            st.success("✨ 相性攻略法と質問3選を「面接中メモ」の自動カンペ枠へ追記しました！")
-                            st.rerun()
                     except:
-                        pass # 万が一分割が失敗した場合は追記をスキップ
+                        pass
+                    
+                    # 💡 【新・自動保存】合体メモと一緒に、事前プロファイリング結果自体（saved_pre_profile）もデータベースに永久保存！
+                    conn = get_db_connection()
+                    conn.execute("""
+                    INSERT OR REPLACE INTO candidate_notes (candidate_id, raw_interview_memo, ai_report_json, final_judgment_memo, pre_profile_report)
+                    VALUES (?, ?, ?, ?, ?)
+                    """, (c_id, new_memo_content, ai_report, final_memo, ai_res))
+                    conn.commit()
+                    conn.close()
+                    
+                    st.session_state[f"cached_memo_{c_id}"] = new_memo_content
+                    st.success("✨ プロファイリングを永久保存し、面接メモの1番下へ自動カンペを埋め込みました！")
+                    st.rerun()
             
-            if f"pre_ai_{c_id}" in st.session_state:
-                st.info("💡 AIによる事前プロファイリング結果（各項目300字要約）")
-                st.markdown(st.session_state[f"pre_ai_{c_id}"])
+            # 💡 一度でもボタンを押して保存されていれば、次からはボタンを押さなくてもここに自動で出続けます！
+            if saved_pre_profile:
+                st.info("💡 AIによる事前プロファイリング結果（自動保存済み・各項目300字要約）")
+                st.markdown(saved_pre_profile)
+            else:
+                st.warning("⚠️ まだこの候補者の事前アドバイスは作られていません。上のボタンを押して生成してください。")
 
         # --- 子タブ2: 面接中（リアルタイム） ---
-        with sub_tab2:
+        with sub_tabs[1]:
             st.subheader("面接リアルタイム議事録・メモ")
             col_memo, col_assist = st.columns([2, 1])
             with col_memo:
-                # 事前アドバイスが自動挿入されたメモがここに表示されます！
-                updated_memo = st.text_area("面接の様子や発言をテンプレートに沿って入力してください", value=raw_memo, height=600, key=f"memo_{c_id}")
+                display_memo = st.session_state.get(f"cached_memo_{c_id}", raw_memo)
+                updated_memo = st.text_area("面接の様子や発言をテンプレートに沿って入力してください（スクロールすると一番下にAIの自動カンペがあります！）", value=display_memo, height=600, key=f"memo_text_area_{c_id}")
+                
                 if st.button("メモを一時保存"):
                     conn = get_db_connection()
                     conn.execute("""
-                    INSERT OR REPLACE INTO candidate_notes (candidate_id, raw_interview_memo, ai_report_json, final_judgment_memo)
-                    VALUES (?, ?, ?, ?)
-                    """, (c_id, updated_memo, ai_report, final_memo))
+                    INSERT OR REPLACE INTO candidate_notes (candidate_id, raw_interview_memo, ai_report_json, final_judgment_memo, pre_profile_report)
+                    VALUES (?, ?, ?, ?, ?)
+                    """, (c_id, updated_memo, ai_report, final_memo, saved_pre_profile))
                     conn.commit()
                     conn.close()
+                    st.session_state[f"cached_memo_{c_id}"] = updated_memo
                     st.success("メモを保存しました。")
             with col_assist:
                 st.subheader("💡 AIリアルタイム提案")
@@ -457,14 +468,18 @@ if active_tab == "🔎 面接・評価（詳細画面）":
                     st.warning(st.session_state[f"mid_ai_{c_id}"])
 
         # --- 子タブ3: 面接後 ---
-        with sub_tab3:
+        with sub_tabs[2]:
             st.subheader("🤖 AI評価レポート生成")
             if st.button("AIレポートを生成する"):
                 with st.spinner("レポート生成中..."):
-                    prompt = f"以下の面接メモを元に、主体性・素直さ・成長意欲・継続力・コミュ力・フルリモート適性・行動力・フィードバック耐性の8項目について強みと懸念点を整理し、育成難易度と活躍可能性を言語化してください。合否判断は書かないでください。\n\nメモ:\n{updated_memo}"
+                    current_memo_to_report = st.session_state.get(f"cached_memo_{c_id}", updated_memo)
+                    prompt = f"以下の面接メモを元に、主体性・素直さ・成長意欲・継続力・コミュ力・フルリモート適性・行動力・フィードバック耐性の8項目について強みと懸念点を整理し、育成難易度と活躍可能性を言語化してください。合否判断は書かないでください。\n\nメモ:\n{current_memo_to_report}"
                     ai_report = ask_gemini(prompt)
                     conn = get_db_connection()
-                    conn.execute("INSERT OR REPLACE INTO candidate_notes VALUES (?, ?, ?, ?)", (c_id, updated_memo, ai_report, final_memo))
+                    conn.execute("""
+                    INSERT OR REPLACE INTO candidate_notes (candidate_id, raw_interview_memo, ai_report_json, final_judgment_memo, pre_profile_report)
+                    VALUES (?, ?, ?, ?, ?)
+                    """, (c_id, current_memo_to_report, ai_report, final_memo, saved_pre_profile))
                     conn.commit()
                     conn.close()
             if ai_report:
@@ -475,8 +490,12 @@ if active_tab == "🔎 面接・評価（詳細画面）":
             updated_final_memo = st.text_area("マキコさん自身の最終的な評価・所感・採用判断理由を記入してください", value=final_memo)
             new_status = st.selectbox("選考結果（ステータス更新）", ["合否連絡待ち", "採用決定", "不採用", "日程調整待ち"])
             if st.button("最終判断を確定して保存"):
+                current_memo_to_save = st.session_state.get(f"cached_memo_{c_id}", updated_memo)
                 conn = get_db_connection()
-                conn.execute("INSERT OR REPLACE INTO candidate_notes VALUES (?, ?, ?, ?)", (c_id, updated_memo, ai_report, updated_final_memo))
+                conn.execute("""
+                INSERT OR REPLACE INTO candidate_notes (candidate_id, raw_interview_memo, ai_report_json, final_judgment_memo, pre_profile_report)
+                VALUES (?, ?, ?, ?, ?)
+                """, (c_id, current_memo_to_save, ai_report, updated_final_memo, saved_pre_profile))
                 conn.execute("UPDATE candidates SET status=? WHERE id=?", (new_status, c_id))
                 conn.commit()
                 conn.close()

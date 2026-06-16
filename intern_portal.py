@@ -131,31 +131,20 @@ def calculate_numerology(birth_date_str):
 def get_db_connection():
     return sqlite3.connect(DB_FILE)
 
-# 💡 NotFound(404)エラーを絶対に回避するための、安全なAI呼び出し関数
+# 💡 最新仕様のGemini 1.5に完全に絞り込んでエラーを回避する関数
 def ask_gemini(prompt_text):
     if not os.getenv("GEMINI_API_KEY", ""):
         return "APIキーが設定されていません。"
         
-    # 新規の無料プロジェクトでも100%動く可能性が高いモデル名を順番に試す
-    candidate_models = [
-        'gemini-1.5-flash-latest',
-        'gemini-1.5-pro-latest',
-        'gemini-1.5-flash',
-        'gemini-1.5-pro',
-        'gemini-pro'
-    ]
+    # 現在の無料枠で100%動く最新の主力モデル名
+    model_name = 'gemini-1.5-flash'
     
-    last_error = None
-    for model_name in candidate_models:
-        try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt_text)
-            return response.text
-        except Exception as e:
-            last_error = e
-            continue # ダメなら次のモデルを試す
-            
-    return f"⚠️ 申し訳ありません。Google AIのモデル接続でエラーが発生しました。\n詳細: {str(last_error)}"
+    try:
+        model = genai.GenerativeModel(model_name)
+        response = model.generate_content(prompt_text)
+        return response.text
+    except Exception as e:
+        return f"⚠️ 申し訳ありません。Google AIの接続でエラーが発生しました。\n詳細: {str(e)}"
 
 if "selected_candidate_id" not in st.session_state:
     st.session_state["selected_candidate_id"] = None
@@ -337,7 +326,7 @@ with main_tab2:
             st.subheader("🤖 AI事前プロファイリング")
             
             if st.button("AI相性診断＆事前アドバイスを生成", key="pre_ai_btn"):
-                with st.spinner("Geminiが利用可能なモデルを探索して分析中..."):
+                with st.spinner("Geminiが分析中..."):
                     my_fortune_str = ", ".join([f"{k}:{v}" for k, v in MY_PROFILE["five_animals"].items()])
                     c_fortune_str = ", ".join([f"{k}:{v}" for k, v in c_fortune.items()])
                     fortune_note = "※候補者の占い情報が『未設定』の場合は、経歴や自己PR、求める8項目を中心とした面接対策を重点的に提案してください。"
@@ -364,7 +353,6 @@ with main_tab2:
                     3. 【面接官マキコとのコミュニケーション攻略法】
                     4. 【本日ぶつけるべき深掘り質問候補3選】
                     """
-                    # 安全関数経由で呼び出し
                     st.session_state[f"pre_ai_{c_id}"] = ask_gemini(prompt)
             
             if f"pre_ai_{c_id}" in st.session_state:
@@ -390,7 +378,7 @@ with main_tab2:
                 st.subheader("💡 AIリアルタイム提案")
                 if st.button("確認漏れ・追加質問をAIに聞く"):
                     with st.spinner("分析中..."):
-                        prompt = f"現在の面接メモ（{updated_memo}）から、主体性、素直さ、成長意欲、継続力、コミュニケーション能力、フルリモート適性、行動力、フィードバック耐性の観点で足りない情報 and 自然な追加質問を2つ提案してください。"
+                        prompt = f"現在の面接メモ（{updated_memo}）から、主体性、素弱さ、成長意欲、継続力、コミュニケーション能力、フルリモート適性、行動力、フィードバック耐性の観点で足りない情報 and 自然な追加質問を2つ提案してください。"
                         st.session_state[f"mid_ai_{c_id}"] = ask_gemini(prompt)
                 if f"mid_ai_{c_id}" in st.session_state:
                     st.warning(st.session_state[f"mid_ai_{c_id}"])

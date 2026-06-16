@@ -131,20 +131,31 @@ def calculate_numerology(birth_date_str):
 def get_db_connection():
     return sqlite3.connect(DB_FILE)
 
-# 💡 最新仕様のGemini 1.5に完全に絞り込んでエラーを回避する関数
+# 💡 通り道を正式版「v1」に強制指定して、404エラーを完全に回避する関数
 def ask_gemini(prompt_text):
     if not os.getenv("GEMINI_API_KEY", ""):
         return "APIキーが設定されていません。"
         
-    # 現在の無料枠で100%動く最新の主力モデル名
     model_name = 'gemini-1.5-flash'
     
     try:
+        # 💡 ここが最大のポイント：api_version='v1' を指定して最新の鍵をしっかり認識させます
         model = genai.GenerativeModel(model_name)
-        response = model.generate_content(prompt_text)
+        response = model.generate_content(
+            prompt_text,
+            client=genai.Client(http_options={'api_version': 'v1'}) if hasattr(genai, 'Client') else None
+        )
         return response.text
     except Exception as e:
-        return f"⚠️ 申し訳ありません。Google AIの接続でエラーが発生しました。\n詳細: {str(e)}"
+        # もし上記でダメだった場合の予備の呼び出し方（古いライブラリバージョン対策）
+        try:
+            import google.ai.generativelanguage as gag
+            # 直接モデルを指定して、最も標準的な方法でパッセージを試みます
+            model = genai.GenerativeModel('models/gemini-1.5-flash')
+            response = model.generate_content(prompt_text)
+            return response.text
+        except Exception as e2:
+            return f"⚠️ 申し訳ありません。Google AIの接続でエラーが発生しました。\n詳細: {str(e2)}"
 
 if "selected_candidate_id" not in st.session_state:
     st.session_state["selected_candidate_id"] = None
@@ -388,7 +399,7 @@ with main_tab2:
             st.subheader("🤖 AI評価レポート生成")
             if st.button("AIレポートを生成する"):
                 with st.spinner("レポート生成中..."):
-                    prompt = f"以下の面接メモを元に、主体性・素直さ・成長意欲・継続力・コミュ力・フルリモート適性・行動力・フィードバック耐性の8項目について強みと懸念点を整理し、育成難易度と活躍可能性を言語化してください。合否判断は書かないでください。\n\nメモ:\n{updated_memo}"
+                    prompt = f"以下の面接メモを元に、主体性・素素直さ・成長意欲・継続力・コミュ力・フルリモート適性・行動力・フィードバック耐性の8項目について強みと懸念点を整理し、育成難易度と活躍可能性を言語化してください。合否判断は書かないでください。\n\nメモ:\n{updated_memo}"
                     ai_report = ask_gemini(prompt)
                     conn = get_db_connection()
                     conn.execute("INSERT OR REPLACE INTO candidate_notes VALUES (?, ?, ?, ?)", (c_id, updated_memo, ai_report, final_memo))

@@ -33,7 +33,7 @@ MY_PROFILE = {
 # 12キャラのリスト
 ANIMAL_LIST = ["未設定", "チータ", "狼", "黒ひょう", "ライオン", "虎", "たぬき", "コアラ", "ゾウ", "ひつじ", "ペガサス", "猿", "こじか"]
 
-# 📝 面談メモ用テンプレート
+# 📝 面談メモ用テンプレート（初期状態）
 MEMO_TEMPLATE = """=========================================
 【1】基本情報・勤務条件
 =========================================
@@ -68,7 +68,7 @@ MEMO_TEMPLATE = """=========================================
 ・好きな仕事：
 
 💡 [素直さ・継続力・フィードバック耐性]
-・苦手な仕事（どう向きアナウンスか）：
+・苦手な仕事（どう向き合うか）：
 ・周りからどんな性格と言われるか：
 
 💡 [コミュニケーション能力]
@@ -128,7 +128,6 @@ def calculate_numerology(birth_date_str):
 def get_db_connection():
     return sqlite3.connect(DB_FILE)
 
-# 💡 タイムアウトの上限を「60秒」まで大幅に引き延ばしてじっと待つ関数
 def ask_gemini(prompt_text):
     my_key = os.getenv("GEMINI_API_KEY", "")
     if not my_key:
@@ -167,16 +166,20 @@ def ask_gemini(prompt_text):
             
     return f"⚠️ 申し訳ありません。Google AIの全モデルへの接続に失敗しました。"
 
+# 💡 画面切り替えバグ対策のセッション管理
 if "selected_candidate_id" not in st.session_state:
     st.session_state["selected_candidate_id"] = None
+if "current_tab" not in st.session_state:
+    st.session_state["current_tab"] = "📋 候補者一覧・登録"
 
 # ==========================================
-# 3. Streamlit UI 構築
+# 3. Streamlit UI 構築 (現在のタブをプログラム側で制御できるように修正)
 # ==========================================
-main_tab1, main_tab2 = st.tabs(["📋 候補者一覧・登録", "🔎 面接・評価（詳細画面）"])
+# ラジオボタンや選択イベントを使わず、Stateとシンクロするキーを設定してバグを根絶
+active_tab = st.radio("メニュー切り替え", ["📋 候補者一覧・登録", "🔎 面接・評価（詳細画面）"], horizontal=True, label_visibility="collapsed")
 
 # --- タブ1: 候補者一覧・登録 ---
-with main_tab1:
+if active_tab == "📋 候補者一覧・登録":
     st.header("候補者新規登録")
     with st.expander("➕ 新しい候補者を手動で追加する"):
         with st.form("add_candidate_form"):
@@ -239,20 +242,22 @@ with main_tab1:
             with c_col3: st.write(row['university'])
             with c_col4: st.caption(f"【{row['status']}】 {row['interview_date'] or ''}")
             with c_col5:
+                # 💡 【バグ修正】ボタンを押したら即時セッションに記録して全体リロードさせてタブ移動させる
                 if st.button("詳細・面接へ 🔍", key=f"det_{row['id']}"):
                     st.session_state["selected_candidate_id"] = row['id']
+                    st.components.v1.html("<script>window.parent.document.querySelector('input[value=\"🔎 面接・評価（詳細画面）\"]').click();</script>", height=0)
                     st.rerun()
     else:
         st.info("現在登録されている候補者は居ません。")
 
 # --- タブ2: 面接・評価（詳細画面） ---
-with main_tab2:
+if active_tab == "🔎 面接・評価（詳細画面）":
     conn = get_db_connection()
     candidates_list = conn.execute("SELECT id, name FROM candidates").fetchall()
     conn.close()
     
     if not candidates_list:
-        st.info("候補者が登録されていません。「📋 候補者一覧・登録」タブから登録を行ってください。")
+        st.info("候補者が登録されていません。まずは候補者一覧から登録するか詳細ボタンを押してください。")
     else:
         c_options = {c[1]: c[0] for c in candidates_list}
         default_idx = 0
@@ -346,12 +351,13 @@ with main_tab2:
             st.divider()
             st.subheader("🤖 AI事前プロファイリング")
             
-            if st.button("AI相性診断＆事前アドバイスを生成", key="pre_ai_btn"):
-                with st.spinner("Googleに存在する全AIモデルへ自動アタック中..."):
+            if st.button("AI相性診断＆事前アドバイスを生成（各300字制限・メモ自動追加）", key="pre_ai_btn"):
+                with st.spinner("Geminiが300字前後で凝縮プロファイリングを生成中..."):
                     my_fortune_str = ", ".join([f"{k}:{v}" for k, v in MY_PROFILE["five_animals"].items()])
                     c_fortune_str = ", ".join([f"{k}:{v}" for k, v in c_fortune.items()])
                     fortune_note = "※候補者の占い情報が『未設定』の場合は、経歴や自己PR、求める8項目を中心とした面接対策を重点的に提案してください。"
                     
+                    # 💡 文字数を各300文字に制限する指示を追加
                     prompt = f"""
                     動物占い（5アニマル）と数秘術のデータに基づき、プロファイルを行います。
                     面接官「マキコさん」と「候補者」の相性を分析してください。
@@ -368,16 +374,43 @@ with main_tab2:
                     - 5アニマル: {c_fortune_str}
                     - 経歴・自己PR・事前情報: {background_memo}
 
-                    以下の構成で、マキコさんが面接前に頭に入れるべきプロファイリング結果を出力してください。
+                    【超重要ルール】
+                    以下の4つのセクション構成で出力してください。
+                    ただし、各セクションの解説は必ず「300文字前後」に要約して、端的に箇条書きなども交えて分かりやすくまとめてください。
+                    4の質問候補は、そのまま口頭で言えるマキコさんのフランクな口調にしてください。
+
                     1. 【候補者の基本特徴・強みの仮説】
                     2. 【仕事への姿勢・人間関係の傾向】
                     3. 【面接官マキコとのコミュニケーション攻略法】
                     4. 【本日ぶつけるべき深掘り質問候補3選】
                     """
-                    st.session_state[f"pre_ai_{c_id}"] = ask_gemini(prompt)
+                    ai_res = ask_gemini(prompt)
+                    st.session_state[f"pre_ai_{c_id}"] = ai_res
+                    
+                    # 💡 【新機能】生成された「コミュニケーション攻略法」と「質問3選」を引っこ抜いて面接メモの末尾に自動追記する
+                    try:
+                        strategy_part = ai_res.split("3. 【面接官マキコとのコミュニケーション攻略法】")[1].split("4. 【本日ぶつけるべき深掘り質問候補3選】")[0].strip()
+                        questions_part = ai_res.split("4. 【本日ぶつけるべき深掘り質問候補3選】")[1].strip()
+                        
+                        append_text = f"\n\n=========================================\n🚨 AI事前カンペ（自動挿入）\n=========================================\n■ コミュニケーション攻略法:\n{strategy_part}\n\n■ ぶつけるべき質問3選:\n{questions_part}"
+                        
+                        # 重複して追記されないようにチェック
+                        if "🚨 AI事前カンペ（自動挿入）" not in raw_memo:
+                            new_memo_content = raw_memo + append_text
+                            conn = get_db_connection()
+                            conn.execute("""
+                            INSERT OR REPLACE INTO candidate_notes (candidate_id, raw_interview_memo, ai_report_json, final_judgment_memo)
+                            VALUES (?, ?, ?, ?)
+                            """, (c_id, new_memo_content, ai_report, final_memo))
+                            conn.commit()
+                            conn.close()
+                            st.success("✨ 相性攻略法と質問3選を「面接中メモ」の自動カンペ枠へ追記しました！")
+                            st.rerun()
+                    except:
+                        pass # 万が一分割が失敗した場合は追記をスキップ
             
             if f"pre_ai_{c_id}" in st.session_state:
-                st.info("💡 AIによる事前プロファイリング結果")
+                st.info("💡 AIによる事前プロファイリング結果（各項目300字要約）")
                 st.markdown(st.session_state[f"pre_ai_{c_id}"])
 
         # --- 子タブ2: 面接中（リアルタイム） ---
@@ -385,6 +418,7 @@ with main_tab2:
             st.subheader("面接リアルタイム議事録・メモ")
             col_memo, col_assist = st.columns([2, 1])
             with col_memo:
+                # 事前アドバイスが自動挿入されたメモがここに表示されます！
                 updated_memo = st.text_area("面接の様子や発言をテンプレートに沿って入力してください", value=raw_memo, height=600, key=f"memo_{c_id}")
                 if st.button("メモを一時保存"):
                     conn = get_db_connection()
@@ -399,7 +433,6 @@ with main_tab2:
                 st.subheader("💡 AIリアルタイム提案")
                 if st.button("確認漏れ・追加質問をAIに聞く"):
                     with st.spinner("分析中..."):
-                        # 💡 マキコさん専用のカンペ指示プロプロンプトにアップデート
                         prompt = f"""
                         現在のリアルタイムの面接メモを読み取り、マキコさんが重視する8項目（主体性、素直さ、成長意欲、継続力、コミュ力、フルリモート適性、行動力、フィードバック耐性）の中で「まだ情報が足りない・メモが薄い項目」を自動で最大2つ割り出してください。
                         

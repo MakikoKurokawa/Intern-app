@@ -30,13 +30,63 @@ MY_PROFILE = {
     }
 }
 
-# 12キャラのリスト（選択用）
-ANIMAL_LIST = ["チータ", "狼", "黒ひょう", "ライオン", "虎", "たぬき", "コアラ", "ゾウ", "ひつじ", "ペガサス", "猿", "こじか"]
+# 12キャラのリスト
+ANIMAL_LIST = ["未設定", "チータ", "狼", "黒ひょう", "ライオン", "虎", "たぬき", "コアラ", "ゾウ", "ひつじ", "ペガサス", "猿", "こじか"]
+
+# 📝 マキコさん専用：新・面談メモ用テンプレート（完全確定版）
+MEMO_TEMPLATE = """=========================================
+【1】基本情報・勤務条件
+=========================================
+・年齢：
+・住所：
+・家族構成：
+・希望シフト（曜日・時間帯）：
+・出勤NGな日・時間帯：
+・現在の勤務状況（掛け持ちなど）：
+・勤務上の配慮事項（体調、家庭事情など）：
+
+=========================================
+【2】フルリモート適性・業務スキル
+=========================================
+■ 出社可能か？：
+■ フルリモートの経験・不安はないか？：
+■ 電話対応やコールの経験はあるか？：
+■ コール拒否や断りが続いた経験はあるか？どう乗り越える？：
+
+=========================================
+【3】志望動機・経験・求めるスキル
+=========================================
+■ 志望動機・応募のきっかけ：
+■ 過去の経験（アルバイト・職務経験・期間・内容）：
+■ インターンで経験したいこと・得たいスキル：
+
+=========================================
+【4】マキコさんが重視する8項目（エピソード深掘り）
+=========================================
+💡 [主体性・行動力・成長意欲]
+・過去に仕事や学校で「自ら動いて頑張った」経験：
+・好きな仕事：
+
+💡 [素直さ・継続力・フィードバック耐性]
+・苦手な仕事（どう向き合うか）：
+・周りからどんな性格と言われるか：
+
+💡 [コミュニケーション能力]
+・お客様対応で意識していること：
+
+=========================================
+【5】その他・マキコさん用リマインダー
+=========================================
+・候補者からの質問、確認したいこと：
+
+⚠️ 最後に必ず確認！【最重要チェック項目】
+1. 「こちらに聞きたいこと、確認したいこと、知っておいてほしいことは何ですか？」
+2. 勤務開始時期の再確認（いつから動けそうか）
+3. 判断基準・選考状況の再確認（いつごろまでに決めたいか、何を見て決めるか）"""
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    # 候補者テーブル
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS candidates (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,15 +99,11 @@ def init_db():
         animals_json TEXT
     )
     """)
-    
-    # 💡 【今回のエラー対策】古いデータベースがすでにPC内にある場合、強制的にカラムを追加する
     try:
         cursor.execute("ALTER TABLE candidates ADD COLUMN animals_json TEXT")
     except sqlite3.OperationalError:
-        # すでにカラムがある場合はエラーを無視して進む
         pass
 
-    # 面接メモ・評価テーブル
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS candidate_notes (
         candidate_id INTEGER PRIMARY KEY,
@@ -72,17 +118,14 @@ def init_db():
 
 init_db()
 
-# ==========================================
-# 2. ロジック層：数秘術の正確な計算
-# ==========================================
 def calculate_numerology(birth_date_str):
-    if not birth_date_str:
-        return 1
+    if not birth_date_str or birth_date_str == "不明":
+        return "未設定"
     digits = [int(d) for d in birth_date_str if d.isdigit()]
     total = sum(digits)
     while total > 9 and total not in [11, 22, 33]:
         total = sum(int(d) for d in str(total))
-    return total
+    return f"{total}番"
 
 def get_db_connection():
     return sqlite3.connect(DB_FILE)
@@ -93,42 +136,38 @@ if "selected_candidate_id" not in st.session_state:
 # ==========================================
 # 3. Streamlit UI 構築
 # ==========================================
-st.title(" 採用アシスタント AI コパイロット (MVP)")
+main_tab1, main_tab2 = st.tabs(["📋 候補者一覧・登録", "🔎 面接・評価（詳細画面）"])
 
-if not api_key:
-    st.warning("⚠️ OpenAIのAPIキーが設定されていません。環境変数 `OPENAI_API_KEY` を設定してください。")
-
-current_tabs = ["📋 候補者一覧・登録", "🔎 面接・評価（詳細画面）"]
-selected_tab = st.radio("メニュー切り替え", current_tabs, horizontal=True, label_visibility="collapsed")
-
-# ------------------------------------------
-# タブ1: 候補者一覧・登録
-# ------------------------------------------
-if selected_tab == "📋 候補者一覧・登録":
+# --- タブ1: 候補者一覧・登録 ---
+with main_tab1:
     st.header("候補者新規登録")
     with st.expander("➕ 新しい候補者を手動で追加する"):
         with st.form("add_candidate_form"):
             st.subheader("【1】基本情報")
             c_name = st.text_input("候補者氏名（必須）")
             c_univ = st.text_input("大学名・所属")
+            
+            is_birth_unknown = st.checkbox("生年月日が不明（占いをスキップ）")
             c_birth = st.date_input("生年月日", value=datetime(2002, 1, 1))
+            
             c_status = st.selectbox("ステータス", ["面接予定", "日程調整待ち", "合否連絡待ち", "長期間放置候補者"])
             c_date = st.text_input("面接予定日時 (例: 2026-06-20 14:00)")
             c_bg = st.text_area("経歴・自己PR・事前情報")
             
             st.divider()
             st.subheader("🔮 【2】5アニマル情報入力")
-            st.markdown("🔗 **[5アニマル診断はこちら（外部サイト）](https://www.doubutsu-uranai.com/uranai_chara_5animals.php)** で調べた結果を以下に入力してください。")
+            st.markdown("🔗 **[5アニマル診断はこちら（外部サイト）](https://www.doubutsu-uranai.com/uranai_chara_5animals.php)**")
             
             col_a1, col_a2, col_a3, col_a4, col_a5 = st.columns(5)
-            with col_a1: honsitsu = st.selectbox("本質キャラ", ANIMAL_LIST, index=3) 
-            with col_a2: hyomen = st.selectbox("表面キャラ", ANIMAL_LIST, index=1)   
-            with col_a3: kakure = st.selectbox("隠れキャラ", ANIMAL_LIST, index=8)   
-            with col_a4: kibo = st.selectbox("希望キャラ", ANIMAL_LIST, index=4)     
-            with col_a5: kettei = st.selectbox("意思決定キャラ", ANIMAL_LIST, index=10) 
+            with col_a1: honsitsu = st.selectbox("本質キャラ", ANIMAL_LIST, index=0 if is_birth_unknown else 4) 
+            with col_a2: hyomen = st.selectbox("表面キャラ", ANIMAL_LIST, index=0 if is_birth_unknown else 2)   
+            with col_a3: kakure = st.selectbox("隠れキャラ", ANIMAL_LIST, index=0 if is_birth_unknown else 9)   
+            with col_a4: kibo = st.selectbox("希望キャラ", ANIMAL_LIST, index=0 if is_birth_unknown else 5)     
+            with col_a5: kettei = st.selectbox("意思決定キャラ", ANIMAL_LIST, index=0 if is_birth_unknown else 11) 
             
             submit = st.form_submit_button("候補者を登録")
             if submit and c_name:
+                birth_str = "不明" if is_birth_unknown else str(c_birth)
                 animals_dict = {"本質": honsitsu, "表面": hyomen, "隠れ": kakure, "希望": kibo, "意思決定": kettei}
                 animals_json = json.dumps(animals_dict, ensure_ascii=False)
                 
@@ -136,10 +175,10 @@ if selected_tab == "📋 候補者一覧・登録":
                 conn.execute("""
                 INSERT INTO candidates (name, university, birth_date, status, interview_date, background_memo, animals_json)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (c_name, c_univ, str(c_birth), c_status, c_date, c_bg, animals_json))
+                """, (c_name, c_univ, birth_str, c_status, c_date, c_bg, animals_json))
                 conn.commit()
                 conn.close()
-                st.success(f"候補者「{c_name}」を正確な占いデータと共に登録しました！")
+                st.success(f"候補者「{c_name}」を登録しました！")
                 st.rerun()
 
     st.header("🧐 今日やるべきこと ＆ 候補者一覧")
@@ -169,16 +208,14 @@ if selected_tab == "📋 候補者一覧・登録":
     else:
         st.info("現在登録されている候補者は居ません。")
 
-# ------------------------------------------
-# タブ2: 面接・評価（詳細画面）
-# ------------------------------------------
-elif selected_tab == "🔎 面接・評価（詳細画面）":
+# --- タブ2: 面接・評価（詳細画面） ---
+with main_tab2:
     conn = get_db_connection()
     candidates_list = conn.execute("SELECT id, name FROM candidates").fetchall()
     conn.close()
     
     if not candidates_list:
-        st.info("候補者が登録されていません。最初のタブから登録を行ってください。")
+        st.info("候補者が登録されていません。「📋 候補者一覧・登録」タブから登録を行ってください。")
     else:
         c_options = {c[1]: c[0] for c in candidates_list}
         default_idx = 0
@@ -202,14 +239,16 @@ elif selected_tab == "🔎 面接・評価（詳細画面）":
         conn.close()
         
         id_val, name, university, birth_date, status, interview_date, background_memo = c_data
-        raw_memo = notes_data[1] if notes_data else ""
+        
+        # メモが空っぽの時に新しいテンプレートを自動挿入
+        raw_memo = notes_data[1] if (notes_data and notes_data[1]) else MEMO_TEMPLATE
         ai_report = notes_data[2] if notes_data else ""
         final_memo = notes_data[3] if notes_data else ""
         
         if animals_json:
             c_fortune = json.loads(animals_json)
         else:
-            c_fortune = {"本質": "ライオン", "表面": "狼", "隠れ": "ひつじ", "希望": "虎", "意思決定": "猿"}
+            c_fortune = {"本質": "未設定", "表面": "未設定", "隠れ": "未設定", "希望": "未設定", "意思決定": "未設定"}
             
         c_num = calculate_numerology(birth_date)
         
@@ -220,14 +259,16 @@ elif selected_tab == "🔎 面接・評価（詳細画面）":
             col_info, col_fortune = st.columns(2)
             with col_info:
                 st.subheader("基本情報")
-                
                 with st.expander("📝 候補者の基本情報・5アニマルを修正・編集する"):
                     with st.form(f"edit_form_{c_id}"):
                         edit_name = st.text_input("氏名", value=name)
                         edit_univ = st.text_input("大学・所属", value=university)
+                        
+                        edit_birth_unknown = st.checkbox("生年月日が不明（占いをスキップ）", value=(birth_date == "不明"))
                         try: default_b = datetime.strptime(birth_date, "%Y-%m-%d")
                         except: default_b = datetime(2002, 1, 1)
                         edit_birth = st.date_input("生年月日", value=default_b)
+                        
                         edit_status = st.selectbox("ステータス", ["面接予定", "日程調整待ち", "合否連絡待ち", "長期間放置候補者"], index=["面接予定", "日程調整待ち", "合否連絡待ち", "長期間放置候補者"].index(status) if status in ["面接予定", "日程調整待ち", "合否連絡待ち", "長期間放置候補者"] else 0)
                         edit_date = st.text_input("面接予定日時", value=interview_date or "")
                         edit_bg = st.text_area("経歴・自己PR・事前情報", value=background_memo or "")
@@ -236,46 +277,48 @@ elif selected_tab == "🔎 面接・評価（詳細画面）":
                         st.markdown("🔗 **[5アニマル診断はこちら（外部サイト）](https://www.doubutsu-uranai.com/uranai_chara_5animals.php)**")
                         
                         e_col1, e_col2, e_col3, e_col4, e_col5 = st.columns(5)
-                        with e_col1: e_honsitsu = st.selectbox("本質", ANIMAL_LIST, index=ANIMAL_LIST.index(c_fortune.get("本質", "ライオン")))
-                        with e_col2: e_hyomen = st.selectbox("表面", ANIMAL_LIST, index=ANIMAL_LIST.index(c_fortune.get("表面", "狼")))
-                        with e_col3: e_kakure = st.selectbox("隠れ", ANIMAL_LIST, index=ANIMAL_LIST.index(c_fortune.get("隠れ", "ひつじ")))
-                        with e_col4: e_kibo = st.selectbox("希望", ANIMAL_LIST, index=ANIMAL_LIST.index(c_fortune.get("希望", "虎")))
-                        with e_col5: e_kettei = st.selectbox("意思決定", ANIMAL_LIST, index=ANIMAL_LIST.index(c_fortune.get("意思決定", "猿")))
+                        with e_col1: e_honsitsu = st.selectbox("本質", ANIMAL_LIST, index=ANIMAL_LIST.index(c_fortune.get("本質", "未設定")))
+                        with e_col2: e_hyomen = st.selectbox("表面", ANIMAL_LIST, index=ANIMAL_LIST.index(c_fortune.get("表面", "未設定")))
+                        with e_col3: e_kakure = st.selectbox("隠れ", ANIMAL_LIST, index=ANIMAL_LIST.index(c_fortune.get("隠れ", "未設定")))
+                        with e_col4: e_kibo = st.selectbox("希望", ANIMAL_LIST, index=ANIMAL_LIST.index(c_fortune.get("希望", "未設定")))
+                        with e_col5: e_kettei = st.selectbox("意思決定", ANIMAL_LIST, index=ANIMAL_LIST.index(c_fortune.get("意思決定", "未設定")))
                         
                         if st.form_submit_button("修正内容を保存する"):
+                            edit_birth_str = "不明" if edit_birth_unknown else str(edit_birth)
                             new_animals_json = json.dumps({"本質": e_honsitsu, "表面": e_hyomen, "隠れ": e_kakure, "希望": e_kibo, "意思決定": e_kettei}, ensure_ascii=False)
                             conn = get_db_connection()
                             conn.execute("""
                             UPDATE candidates 
                             SET name=?, university=?, birth_date=?, status=?, interview_date=?, background_memo=?, animals_json=?
                             WHERE id=?
-                            """, (edit_name, edit_univ, str(edit_birth), edit_status, edit_date, edit_bg, new_animals_json, c_id))
+                            """, (edit_name, edit_univ, edit_birth_str, edit_status, edit_date, edit_bg, new_animals_json, c_id))
                             conn.commit()
                             conn.close()
                             st.success("情報を修正しました！")
                             st.rerun()
                 
-                st.markdown(f"**氏名:** {name}  \n**所属:** {university}  \n**ステータス:** {status}  \n**面接日時:** {interview_date}")
+                st.markdown(f"**氏名:** {name}  \n**所属:** {university}  \n**ステータス:** {status}  \n**面接日時:** {interview_date}  \n**生年月日:** {birth_date}")
                 st.info(f"**経歴・自己PR・事前情報:**\n{background_memo}")
                 
             with col_fortune:
                 st.subheader("🔮 候補者の5アニマル ＆ 数秘分析")
-                st.success(f"**数秘ナンバー:** {c_num}番")
-                st.markdown("**【5アニマル内訳（正確な確定値）】**")
+                st.success(f"**数秘ナンバー:** {c_num}")
+                st.markdown("**【5アニマル内訳】**")
                 for role, animal in c_fortune.items():
                     st.markdown(f"- **{role}:** {animal}")
                 
             st.divider()
-            st.subheader("🤖 AI事前プロファイリング（性格・仕事・人間関係・面接官マキコとの相性）")
+            st.subheader("🤖 AI事前プロファイリング")
             
             if st.button("AI相性診断＆事前アドバイスを生成", key="pre_ai_btn") and client:
-                with st.spinner("マキコさんと候補者の素質を宇宙規模で分析中..."):
+                with st.spinner("プロファイリング中..."):
                     my_fortune_str = ", ".join([f"{k}:{v}" for k, v in MY_PROFILE["five_animals"].items()])
                     c_fortune_str = ", ".join([f"{k}:{v}" for k, v in c_fortune.items()])
+                    fortune_note = "※候補者の占い情報が『未設定』の場合は、経歴や自己PR、求める8項目を中心とした面接対策を重点的に提案してください。"
                     
                     prompt = f"""
-                    外れることのない完璧な動物占い（5アニマル）と数秘術のデータに基づき、プロファイルを行います。
-                    面接官「マキコさん」と「候補者」の相性を分析してください。
+                    面接官「マキコさん」と「候補者」のデータから事前アドバイスを生成してください。
+                    {fortune_note}
 
                     ■ 面接官（あなた）の情報
                     - お名前: {MY_PROFILE['name']}
@@ -284,20 +327,17 @@ elif selected_tab == "🔎 面接・評価（詳細画面）":
 
                     ■ 候補者の情報
                     - お名前: {name}
-                    - 数秘: {c_num}番
+                    - 数秘: {c_num}
                     - 5アニマル: {c_fortune_str}
                     - 経歴・自己PR・事前情報: {background_memo}
 
                     以下の構成で、マキコさんが面接前に頭に入れるべきプロファイリング結果を出力してください。
-                    1. 【候補者の基本性格・特徴】（数秘と5アニマルの全要素から分析）
+                    1. 【候補者の基本特徴・強みの仮説】
                     2. 【仕事への姿勢・人間関係の傾向】
-                    3. 【面接官マキコとの相性・コミュニケーション攻略法】
-                    4. 【本日ぶつけるべき深掘り質問候補3選】（特に候補者の意思決定の価値観や、主体性・素直さを見極める質問）
+                    3. 【面接官マキコとのコミュニケーション攻略法】
+                    4. 【本日ぶつけるべき深掘り質問候補3選】
                     """
-                    response = client.chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=[{"role": "user", "content": prompt}]
-                    )
+                    response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}])
                     st.session_state[f"pre_ai_{c_id}"] = response.choices[0].message.content
             
             if f"pre_ai_{c_id}" in st.session_state:
@@ -309,7 +349,7 @@ elif selected_tab == "🔎 面接・評価（詳細画面）":
             st.subheader("面接リアルタイム議事録・メモ")
             col_memo, col_assist = st.columns([2, 1])
             with col_memo:
-                updated_memo = st.text_area("面接の様子や発言をここにメモしてください", value=raw_memo, height=400, key=f"memo_{c_id}")
+                updated_memo = st.text_area("面接の様子や発言をテンプレートに沿って入力してください", value=raw_memo, height=600, key=f"memo_{c_id}")
                 if st.button("メモを一時保存"):
                     conn = get_db_connection()
                     conn.execute("""

@@ -4,16 +4,21 @@ import pandas as pd
 from datetime import datetime
 import json
 import os
-from openai import OpenAI
+import google.generativeai as genai
 
 # ==========================================
 # 1. 初期設定 & データベース初期化
 # ==========================================
 st.set_page_config(page_title="AI採用アシスタント MVP", layout="wide")
 
-# OpenAIクライアント初期化
-api_key = os.getenv("OPENAI_API_KEY", "")
-client = OpenAI(api_key=api_key) if api_key else None
+# Google Gemini APIの初期化（隠しポケットから読み込み）
+api_key = os.getenv("GEMINI_API_KEY", "")
+if api_key:
+    genai.configure(api_key=api_key)
+    # 賢くて爆速なGeminiモデルを選択
+    model = genai.GenerativeModel('gemini-1.5-flash')
+else:
+    model = None
 
 DB_FILE = "interview_assistant.db"
 
@@ -33,7 +38,7 @@ MY_PROFILE = {
 # 12キャラのリスト
 ANIMAL_LIST = ["未設定", "チータ", "狼", "黒ひょう", "ライオン", "虎", "たぬき", "コアラ", "ゾウ", "ひつじ", "ペガサス", "猿", "こじか"]
 
-# 📝 マキコさん専用：新・面談メモ用テンプレート（完全確定版）
+# 📝 面談メモ用テンプレート
 MEMO_TEMPLATE = """=========================================
 【1】基本情報・勤務条件
 =========================================
@@ -99,10 +104,8 @@ def init_db():
         animals_json TEXT
     )
     """)
-    try:
-        cursor.execute("ALTER TABLE candidates ADD COLUMN animals_json TEXT")
-    except sqlite3.OperationalError:
-        pass
+    try: cursor.execute("ALTER TABLE candidates ADD COLUMN animals_json TEXT")
+    except sqlite3.OperationalError: pass
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS candidate_notes (
@@ -240,7 +243,6 @@ with main_tab2:
         
         id_val, name, university, birth_date, status, interview_date, background_memo = c_data
         
-        # メモが空っぽの時に新しいテンプレートを自動挿入
         raw_memo = notes_data[1] if (notes_data and notes_data[1]) else MEMO_TEMPLATE
         ai_report = notes_data[2] if notes_data else ""
         final_memo = notes_data[3] if notes_data else ""
@@ -310,14 +312,15 @@ with main_tab2:
             st.divider()
             st.subheader("🤖 AI事前プロファイリング")
             
-            if st.button("AI相性診断＆事前アドバイスを生成", key="pre_ai_btn") and client:
-                with st.spinner("プロファイリング中..."):
+            if st.button("AI相性診断＆事前アドバイスを生成", key="pre_ai_btn") and model:
+                with st.spinner("Geminiが分析中..."):
                     my_fortune_str = ", ".join([f"{k}:{v}" for k, v in MY_PROFILE["five_animals"].items()])
                     c_fortune_str = ", ".join([f"{k}:{v}" for k, v in c_fortune.items()])
                     fortune_note = "※候補者の占い情報が『未設定』の場合は、経歴や自己PR、求める8項目を中心とした面接対策を重点的に提案してください。"
                     
                     prompt = f"""
-                    面接官「マキコさん」と「候補者」のデータから事前アドバイスを生成してください。
+                    動物占い（5アニマル）と数秘術のデータに基づき、プロファイルを行います。
+                    面接官「マキコさん」と「候補者」の相性を分析してください。
                     {fortune_note}
 
                     ■ 面接官（あなた）の情報
@@ -326,7 +329,7 @@ with main_tab2:
                     - 5アニマル: {my_fortune_str}
 
                     ■ 候補者の情報
-                    - お名前: {name}
+                    - お男性/女性: {name}
                     - 数秘: {c_num}
                     - 5アニマル: {c_fortune_str}
                     - 経歴・自己PR・事前情報: {background_memo}
@@ -337,8 +340,9 @@ with main_tab2:
                     3. 【面接官マキコとのコミュニケーション攻略法】
                     4. 【本日ぶつけるべき深掘り質問候補3選】
                     """
-                    response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}])
-                    st.session_state[f"pre_ai_{c_id}"] = response.choices[0].message.content
+                    # 💡 Gemini用の呼び出し方に変更
+                    response = model.generate_content(prompt)
+                    st.session_state[f"pre_ai_{c_id}"] = response.text
             
             if f"pre_ai_{c_id}" in st.session_state:
                 st.info("💡 AIによる事前プロファイリング結果")
@@ -361,22 +365,22 @@ with main_tab2:
                     st.success("メモを保存しました。")
             with col_assist:
                 st.subheader("💡 AIリアルタイム提案")
-                if st.button("確認漏れ・追加質問をAIに聞く") and client:
+                if st.button("確認漏れ・追加質問をAIに聞く") and model:
                     with st.spinner("分析中..."):
                         prompt = f"現在の面接メモ（{updated_memo}）から、主体性、素直さ、成長意欲、継続力、コミュニケーション能力、フルリモート適性、行動力、フィードバック耐性の観点で足りない情報 and 自然な追加質問を2つ提案してください。"
-                        response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}])
-                        st.session_state[f"mid_ai_{c_id}"] = response.choices[0].message.content
+                        response = model.generate_content(prompt)
+                        st.session_state[f"mid_ai_{c_id}"] = response.text
                 if f"mid_ai_{c_id}" in st.session_state:
                     st.warning(st.session_state[f"mid_ai_{c_id}"])
 
         # --- 子タブ3: 面接後 ---
         with sub_tab3:
             st.subheader("🤖 AI評価レポート生成")
-            if st.button("AIレポートを生成する") and client:
+            if st.button("AIレポートを生成する") and model:
                 with st.spinner("レポート生成中..."):
                     prompt = f"以下の面接メモを元に、主体性・素直さ・成長意欲・継続力・コミュ力・フルリモート適性・行動力・フィードバック耐性の8項目について強みと懸念点を整理し、育成難易度と活躍可能性を言語化してください。合否判断は書かないでください。\n\nメモ:\n{updated_memo}"
-                    response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}])
-                    ai_report = response.choices[0].message.content
+                    response = model.generate_content(prompt)
+                    ai_report = response.text
                     conn = get_db_connection()
                     conn.execute("INSERT OR REPLACE INTO candidate_notes VALUES (?, ?, ?, ?)", (c_id, updated_memo, ai_report, final_memo))
                     conn.commit()

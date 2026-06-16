@@ -102,7 +102,6 @@ def init_db():
     try: cursor.execute("ALTER TABLE candidates ADD COLUMN animals_json TEXT")
     except sqlite3.OperationalError: pass
 
-    # 💡 【機能拡張】事前プロファイリング結果を保存するための列 (pre_profile_report) を追加
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS candidate_notes (
         candidate_id INTEGER PRIMARY KEY,
@@ -173,16 +172,14 @@ def ask_gemini(prompt_text):
 
 if "selected_candidate_id" not in st.session_state:
     st.session_state["selected_candidate_id"] = None
-if "active_tab_index" not in st.session_state:
-    st.session_state["active_tab_index"] = 0
 
 # ==========================================
-# 3. Streamlit UI 構築
+# 3. Streamlit UI 構築（大復活：きれいな st.tabs だけに統一！）
 # ==========================================
-active_tab = st.radio("メニュー切り替え", ["📋 候補者一覧・登録", "🔎 面接・評価（詳細画面）"], horizontal=True, label_visibility="collapsed")
+main_tabs = st.tabs(["📋 候補者一覧・登録", "🔎 面接・評価（詳細画面）"])
 
 # --- タブ1: 候補者一覧・登録 ---
-if active_tab == "📋 候補者一覧・登録":
+with main_tabs[0]:
     st.header("候補者新規登録")
     with st.expander("➕ 新しい候補者を手動で追加する"):
         with st.form("add_candidate_form"):
@@ -245,22 +242,21 @@ if active_tab == "📋 候補者一覧・登録":
             with c_col3: st.write(row['university'])
             with c_col4: st.caption(f"【{row['status']}】 {row['interview_date'] or ''}")
             with c_col5:
+                # 💡 【100%確実に動く仕組み】ラジオボタンとの競合バグを消し去り、確実に選択を固定する案内を出す！
                 if st.button("詳細・面接へ 🔍", key=f"det_{row['id']}"):
                     st.session_state["selected_candidate_id"] = row['id']
-                    st.session_state["active_tab_index"] = 1
-                    st.warning("🔄 データを読み込みました！上のメニューの「🔎 面接・評価（詳細画面）」タブを押してください。")
-                    st.rerun()
+                    st.success(f"🎯 【{row['name']}】さんの選考データをセットしました！上の「🔎 面接・評価」タブを押して進んでください！")
     else:
         st.info("現在登録されている候補者は居ません。")
 
 # --- タブ2: 面接・評価（詳細画面） ---
-if active_tab == "🔎 面接・評価（詳細画面）":
+with main_tabs[1]:
     conn = get_db_connection()
     candidates_list = conn.execute("SELECT id, name FROM candidates").fetchall()
     conn.close()
     
     if not candidates_list:
-        st.info("候補者が登録されていません。「📋 候補者一覧・登録」から詳細ボタンを押してください。")
+        st.info("候補者が登録されていません。「📋 候補者一覧・登録」タブで候補者を選んでください。")
     else:
         c_options = {c[1]: c[0] for c in candidates_list}
         default_idx = 0
@@ -288,7 +284,6 @@ if active_tab == "🔎 面接・評価（詳細画面）":
         raw_memo = notes_data[1] if (notes_data and notes_data[1]) else MEMO_TEMPLATE
         ai_report = notes_data[2] if notes_data else ""
         final_memo = notes_data[3] if notes_data else ""
-        # 💡 保存された事前プロファイリング結果を読み出す（なければ空っぽ）
         saved_pre_profile = notes_data[4] if (notes_data and len(notes_data) > 4) else ""
         
         if animals_json:
@@ -380,7 +375,7 @@ if active_tab == "🔎 面接・評価（詳細画面）":
 
                     【超重要ルール】
                     以下の4つのセクション構成で出力してください。
-                    ただし、各セクションの解説は必ず「300文字前後」に要約して、端的に箇流書きなども交えて分かりやすくまとめてください。
+                    ただし、各セクションの解説は必ず「300文字前後」に要約して、端的に箇条書きなども交えて分かりやすくまとめてください。
                     4の質問候補は、そのまま口頭で言えるマキコさんのフランクな口調にしてください。
 
                     1. 【候補者の基本特徴・強みの仮説】
@@ -389,9 +384,8 @@ if active_tab == "🔎 面接・評価（詳細画面）":
                     4. 【本日ぶつけるべき深掘り質問候補3選】
                     """
                     ai_res = ask_gemini(prompt)
-                    saved_pre_profile = ai_res # 画面表示用変数を上書き
+                    saved_pre_profile = ai_res
                     
-                    # 💡 【自動合体機能】質問と攻略法を切り取って面談メモへ合体
                     new_memo_content = raw_memo
                     try:
                         strategy_part = ai_res.split("3. 【面接官マキコとのコミュニケーション攻略法】")[1].split("4. 【本日ぶつけるべき深掘り質問候補3選】")[0].strip()
@@ -402,7 +396,6 @@ if active_tab == "🔎 面接・評価（詳細画面）":
                     except:
                         pass
                     
-                    # 💡 【新・自動保存】合体メモと一緒に、事前プロファイリング結果自体（saved_pre_profile）もデータベースに永久保存！
                     conn = get_db_connection()
                     conn.execute("""
                     INSERT OR REPLACE INTO candidate_notes (candidate_id, raw_interview_memo, ai_report_json, final_judgment_memo, pre_profile_report)
@@ -415,7 +408,6 @@ if active_tab == "🔎 面接・評価（詳細画面）":
                     st.success("✨ プロファイリングを永久保存し、面接メモの1番下へ自動カンペを埋め込みました！")
                     st.rerun()
             
-            # 💡 一度でもボタンを押して保存されていれば、次からはボタンを押さなくてもここに自動で出続けます！
             if saved_pre_profile:
                 st.info("💡 AIによる事前プロファイリング結果（自動保存済み・各項目300字要約）")
                 st.markdown(saved_pre_profile)

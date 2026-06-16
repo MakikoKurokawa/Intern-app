@@ -11,14 +11,12 @@ import google.generativeai as genai
 # ==========================================
 st.set_page_config(page_title="AI採用アシスタント MVP", layout="wide")
 
-# Google Gemini APIの初期化（隠しポケットから読み込み）
+# Google Gemini APIの初期化
 api_key = os.getenv("GEMINI_API_KEY", "")
 if api_key:
     genai.configure(api_key=api_key)
-    # 賢くて爆速なGeminiモデルを選択
-    model = genai.GenerativeModel('gemini-1.5-flash')
 else:
-    model = None
+    st.error("⚠️ GEMINI_API_KEY が設定されていません。StreamlitのSecretsを確認してください。")
 
 DB_FILE = "interview_assistant.db"
 
@@ -132,6 +130,32 @@ def calculate_numerology(birth_date_str):
 
 def get_db_connection():
     return sqlite3.connect(DB_FILE)
+
+# 💡 NotFound(404)エラーを絶対に回避するための、安全なAI呼び出し関数
+def ask_gemini(prompt_text):
+    if not os.getenv("GEMINI_API_KEY", ""):
+        return "APIキーが設定されていません。"
+        
+    # 新規の無料プロジェクトでも100%動く可能性が高いモデル名を順番に試す
+    candidate_models = [
+        'gemini-1.5-flash-latest',
+        'gemini-1.5-pro-latest',
+        'gemini-1.5-flash',
+        'gemini-1.5-pro',
+        'gemini-pro'
+    ]
+    
+    last_error = None
+    for model_name in candidate_models:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt_text)
+            return response.text
+        except Exception as e:
+            last_error = e
+            continue # ダメなら次のモデルを試す
+            
+    return f"⚠️ 申し訳ありません。Google AIのモデル接続でエラーが発生しました。\n詳細: {str(last_error)}"
 
 if "selected_candidate_id" not in st.session_state:
     st.session_state["selected_candidate_id"] = None
@@ -312,8 +336,8 @@ with main_tab2:
             st.divider()
             st.subheader("🤖 AI事前プロファイリング")
             
-            if st.button("AI相性診断＆事前アドバイスを生成", key="pre_ai_btn") and model:
-                with st.spinner("Geminiが分析中..."):
+            if st.button("AI相性診断＆事前アドバイスを生成", key="pre_ai_btn"):
+                with st.spinner("Geminiが利用可能なモデルを探索して分析中..."):
                     my_fortune_str = ", ".join([f"{k}:{v}" for k, v in MY_PROFILE["five_animals"].items()])
                     c_fortune_str = ", ".join([f"{k}:{v}" for k, v in c_fortune.items()])
                     fortune_note = "※候補者の占い情報が『未設定』の場合は、経歴や自己PR、求める8項目を中心とした面接対策を重点的に提案してください。"
@@ -329,7 +353,7 @@ with main_tab2:
                     - 5アニマル: {my_fortune_str}
 
                     ■ 候補者の情報
-                    - お男性/女性: {name}
+                    - お名前: {name}
                     - 数秘: {c_num}
                     - 5アニマル: {c_fortune_str}
                     - 経歴・自己PR・事前情報: {background_memo}
@@ -340,9 +364,8 @@ with main_tab2:
                     3. 【面接官マキコとのコミュニケーション攻略法】
                     4. 【本日ぶつけるべき深掘り質問候補3選】
                     """
-                    # 💡 Gemini用の呼び出し方に変更
-                    response = model.generate_content(prompt)
-                    st.session_state[f"pre_ai_{c_id}"] = response.text
+                    # 安全関数経由で呼び出し
+                    st.session_state[f"pre_ai_{c_id}"] = ask_gemini(prompt)
             
             if f"pre_ai_{c_id}" in st.session_state:
                 st.info("💡 AIによる事前プロファイリング結果")
@@ -365,22 +388,20 @@ with main_tab2:
                     st.success("メモを保存しました。")
             with col_assist:
                 st.subheader("💡 AIリアルタイム提案")
-                if st.button("確認漏れ・追加質問をAIに聞く") and model:
+                if st.button("確認漏れ・追加質問をAIに聞く"):
                     with st.spinner("分析中..."):
                         prompt = f"現在の面接メモ（{updated_memo}）から、主体性、素直さ、成長意欲、継続力、コミュニケーション能力、フルリモート適性、行動力、フィードバック耐性の観点で足りない情報 and 自然な追加質問を2つ提案してください。"
-                        response = model.generate_content(prompt)
-                        st.session_state[f"mid_ai_{c_id}"] = response.text
+                        st.session_state[f"mid_ai_{c_id}"] = ask_gemini(prompt)
                 if f"mid_ai_{c_id}" in st.session_state:
                     st.warning(st.session_state[f"mid_ai_{c_id}"])
 
         # --- 子タブ3: 面接後 ---
         with sub_tab3:
             st.subheader("🤖 AI評価レポート生成")
-            if st.button("AIレポートを生成する") and model:
+            if st.button("AIレポートを生成する"):
                 with st.spinner("レポート生成中..."):
                     prompt = f"以下の面接メモを元に、主体性・素直さ・成長意欲・継続力・コミュ力・フルリモート適性・行動力・フィードバック耐性の8項目について強みと懸念点を整理し、育成難易度と活躍可能性を言語化してください。合否判断は書かないでください。\n\nメモ:\n{updated_memo}"
-                    response = model.generate_content(prompt)
-                    ai_report = response.text
+                    ai_report = ask_gemini(prompt)
                     conn = get_db_connection()
                     conn.execute("INSERT OR REPLACE INTO candidate_notes VALUES (?, ?, ?, ?)", (c_id, updated_memo, ai_report, final_memo))
                     conn.commit()

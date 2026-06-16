@@ -70,7 +70,7 @@ MEMO_TEMPLATE = """=========================================
 ・過去に仕事や学校で「自ら動いて頑張った」経験：
 ・好きな仕事：
 
-💡 [素直さ・継続力・フィードバック耐性]
+💡 [素古直さ・継続力・フィードバック耐性]
 ・苦手な仕事（どう向き合うか）：
 ・周りからどんな性格と言われるか：
 
@@ -131,31 +131,35 @@ def calculate_numerology(birth_date_str):
 def get_db_connection():
     return sqlite3.connect(DB_FILE)
 
-# 💡 通り道を正式版「v1」に強制指定して、404エラーを完全に回避する関数
+# 💡 【決定打】ライブラリのバグを力技でねじ伏せて正式版v1に通信させる関数
 def ask_gemini(prompt_text):
-    if not os.getenv("GEMINI_API_KEY", ""):
+    my_key = os.getenv("GEMINI_API_KEY", "")
+    if not my_key:
         return "APIキーが設定されていません。"
         
-    model_name = 'gemini-1.5-flash'
+    import urllib.request
+    
+    # Googleが公式に提供している「正式版 v1」の直接の裏口URL
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={my_key}"
+    
+    # 送るデータを綺麗なJSONの形に整える
+    data = {
+        "contents": [{
+            "parts": [{"text": prompt_text}]
+        }]
+    }
+    
+    headers = {"Content-Type": "application/json"}
+    req = urllib.request.Request(url, data=json.dumps(data).encode("utf-8"), headers=headers, method="POST")
     
     try:
-        # 💡 ここが最大のポイント：api_version='v1' を指定して最新の鍵をしっかり認識させます
-        model = genai.GenerativeModel(model_name)
-        response = model.generate_content(
-            prompt_text,
-            client=genai.Client(http_options={'api_version': 'v1'}) if hasattr(genai, 'Client') else None
-        )
-        return response.text
+        with urllib.request.urlopen(req) as res:
+            response_body = res.read().decode("utf-8")
+            res_json = json.loads(response_body)
+            # 返ってきたデータからAIの文章だけを引っこ抜く
+            return res_json["candidates"][0]["content"]["parts"][0]["text"]
     except Exception as e:
-        # もし上記でダメだった場合の予備の呼び出し方（古いライブラリバージョン対策）
-        try:
-            import google.ai.generativelanguage as gag
-            # 直接モデルを指定して、最も標準的な方法でパッセージを試みます
-            model = genai.GenerativeModel('models/gemini-1.5-flash')
-            response = model.generate_content(prompt_text)
-            return response.text
-        except Exception as e2:
-            return f"⚠️ 申し訳ありません。Google AIの接続でエラーが発生しました。\n詳細: {str(e2)}"
+        return f"⚠️ 申し訳ありません。Google AIとの直接通信でエラーが発生しました。\n詳細: {str(e)}"
 
 if "selected_candidate_id" not in st.session_state:
     st.session_state["selected_candidate_id"] = None
@@ -337,7 +341,7 @@ with main_tab2:
             st.subheader("🤖 AI事前プロファイリング")
             
             if st.button("AI相性診断＆事前アドバイスを生成", key="pre_ai_btn"):
-                with st.spinner("Geminiが分析中..."):
+                with st.spinner("Geminiへ超ダイレクト接続で通信中..."):
                     my_fortune_str = ", ".join([f"{k}:{v}" for k, v in MY_PROFILE["five_animals"].items()])
                     c_fortune_str = ", ".join([f"{k}:{v}" for k, v in c_fortune.items()])
                     fortune_note = "※候補者の占い情報が『未設定』の場合は、経歴や自己PR、求める8項目を中心とした面接対策を重点的に提案してください。"
@@ -389,7 +393,7 @@ with main_tab2:
                 st.subheader("💡 AIリアルタイム提案")
                 if st.button("確認漏れ・追加質問をAIに聞く"):
                     with st.spinner("分析中..."):
-                        prompt = f"現在の面接メモ（{updated_memo}）から、主体性、素弱さ、成長意欲、継続力、コミュニケーション能力、フルリモート適性、行動力、フィードバック耐性の観点で足りない情報 and 自然な追加質問を2つ提案してください。"
+                        prompt = f"現在の面接メモ（{updated_memo}）から、主体性、素直さ、成長意欲、継続力、コミュニケーション能力、フルリモート適性、行動力、フィードバック耐性の観点で足りない情報 and 自然な追加質問を2つ提案してください。"
                         st.session_state[f"mid_ai_{c_id}"] = ask_gemini(prompt)
                 if f"mid_ai_{c_id}" in st.session_state:
                     st.warning(st.session_state[f"mid_ai_{c_id}"])
@@ -399,7 +403,7 @@ with main_tab2:
             st.subheader("🤖 AI評価レポート生成")
             if st.button("AIレポートを生成する"):
                 with st.spinner("レポート生成中..."):
-                    prompt = f"以下の面接メモを元に、主体性・素素直さ・成長意欲・継続力・コミュ力・フルリモート適性・行動力・フィードバック耐性の8項目について強みと懸念点を整理し、育成難易度と活躍可能性を言語化してください。合否判断は書かないでください。\n\nメモ:\n{updated_memo}"
+                    prompt = f"以下の面接メモを元に、主体性・素直さ・成長意欲・継続力・コミュ力・フルリモート適性・行動力・フィードバック耐性の8項目について強みと懸念点を整理し、育成難易度と活躍可能性を言語化してください。合否判断は書かないでください。\n\nメモ:\n{updated_memo}"
                     ai_report = ask_gemini(prompt)
                     conn = get_db_connection()
                     conn.execute("INSERT OR REPLACE INTO candidate_notes VALUES (?, ?, ?, ?)", (c_id, updated_memo, ai_report, final_memo))

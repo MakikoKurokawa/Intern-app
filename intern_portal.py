@@ -68,7 +68,7 @@ MEMO_TEMPLATE = """=========================================
 ・好きな仕事：
 
 💡 [素直さ・継続力・フィードバック耐性]
-・苦手な仕事（どう向き合うか）：
+・苦手な仕事（どう向きアナウンスか）：
 ・周りからどんな性格と言われるか：
 
 💡 [コミュニケーション能力]
@@ -152,25 +152,20 @@ def ask_gemini(prompt_text):
         }]
     }
     
-    errors = []
-    
     for version, model in models_to_try:
         target_url = f"https://generativelanguage.googleapis.com/{version}/models/{model}:generateContent?key={my_key}"
         headers = {"Content-Type": "application/json"}
         req = urllib.request.Request(target_url, data=json.dumps(data).encode("utf-8"), headers=headers, method="POST")
         
         try:
-            # 💡 timeoutを 10秒 から 60秒 へ延長！激重のGoogleが返事をするまでじっと待ちます
             with urllib.request.urlopen(req, timeout=60) as res:
                 response_body = res.read().decode("utf-8")
                 res_json = json.loads(response_body)
                 return res_json["candidates"][0]["content"]["parts"][0]["text"]
         except Exception as e:
-            errors.append(f"{model}({version}): {str(e)}")
             continue
             
-    error_details = "\n".join(errors)
-    return f"⚠️ 申し訳ありません。Google AIのすべてのモデル窓口への接続に失敗しました。\n\n【試行ログ】:\n{error_details}"
+    return f"⚠️ 申し訳ありません。Google AIの全モデルへの接続に失敗しました。"
 
 if "selected_candidate_id" not in st.session_state:
     st.session_state["selected_candidate_id"] = None
@@ -352,8 +347,7 @@ with main_tab2:
             st.subheader("🤖 AI事前プロファイリング")
             
             if st.button("AI相性診断＆事前アドバイスを生成", key="pre_ai_btn"):
-                # 💡 メッセージをじっくり待つ仕様に変更
-                with st.spinner("Geminiが回答するまで、最大60秒間じっと粘り強く待機中..."):
+                with st.spinner("Googleに存在する全AIモデルへ自動アタック中..."):
                     my_fortune_str = ", ".join([f"{k}:{v}" for k, v in MY_PROFILE["five_animals"].items()])
                     c_fortune_str = ", ".join([f"{k}:{v}" for k, v in c_fortune.items()])
                     fortune_note = "※候補者の占い情報が『未設定』の場合は、経歴や自己PR、求める8項目を中心とした面接対策を重点的に提案してください。"
@@ -405,7 +399,26 @@ with main_tab2:
                 st.subheader("💡 AIリアルタイム提案")
                 if st.button("確認漏れ・追加質問をAIに聞く"):
                     with st.spinner("分析中..."):
-                        prompt = f"現在の面接メモ（{updated_memo}）から、主体性、素直さ、成長意欲、継続力、コミュニケーション能力、フルリモート適性、行動力、フィードバック耐性の観点で足りない情報 and 自然な追加質問を2つ提案してください。"
+                        # 💡 マキコさん専用のカンペ指示プロプロンプトにアップデート
+                        prompt = f"""
+                        現在のリアルタイムの面接メモを読み取り、マキコさんが重視する8項目（主体性、素直さ、成長意欲、継続力、コミュ力、フルリモート適性、行動力、フィードバック耐性）の中で「まだ情報が足りない・メモが薄い項目」を自動で最大2つ割り出してください。
+                        
+                        その上で、マキコさんが面接中に1秒で見てそのまま口頭で読み上げられる「質問のセリフ（カンペ）」と、その質問を投げる「150字前後の背景」をセットで出力してください。
+                        
+                        【厳密な出力フォーマット】
+                        > 💡 **AIからの緊急カンペ：残り時間はここをチェック！**
+
+                        #### ❓ 突っ込み質問①（[割り出した項目名]のチェック）
+                        **「[そのまま口頭で言えるマキコさんのフランクな口調の質問のセリフ]」**
+
+                        * 💡 **質問の背景（150字前後）**
+                          [なぜこの質問をするのか、現在のメモの不足点と候補者の占いや特徴を絡めた150文字前後の解説]
+
+                        （項目が2つある場合は、同様に「#### ❓ 突っ込み質問②」を作成してください）
+                        
+                        【現在の面接メモ】:
+                        {updated_memo}
+                        """
                         st.session_state[f"mid_ai_{c_id}"] = ask_gemini(prompt)
                 if f"mid_ai_{c_id}" in st.session_state:
                     st.warning(st.session_state[f"mid_ai_{c_id}"])

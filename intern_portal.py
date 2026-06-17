@@ -164,7 +164,7 @@ def ask_gemini(prompt_text, image_bytes=None, mime_type=None):
 if "selected_candidate_id" not in st.session_state: st.session_state["selected_candidate_id"] = None
 
 # ==========================================
-# 3. Streamlit UI 構築 (綺麗な st.tabs のみに完全修復)
+# 3. Streamlit UI 構築 (きれいな st.tabs に完全統一)
 # ==========================================
 main_tabs = st.tabs(["📋 候補者一覧・登録", "🔎 面接・評価（詳細画面）"])
 
@@ -209,18 +209,8 @@ with main_tabs[0]:
                             img_prompt = f"""
                             この画像は「動物占い（5アニマル）」の診断結果画面です。
                             画像の中から「本質」「表面」「隠れ」「希望」「意思決定」の5つのキャラクター名を読み取ってください。
-                            
-                            必ず以下の有効なキャラクター名リストの中から一致するものを選んでください。
-                            有効なキャラリスト: {ANIMAL_LIST}
-                            
-                            出力は必ず以下の純粋なJSONフォーマットのみにしてください。他の挨拶や説明は一切不要です。
-                            {{
-                                "本質": "○○",
-                                "表面": "○○",
-                                "隠れ": "○○",
-                                "希望": "○○",
-                                "意思決定": "○○"
-                            }}
+                            必ず有効なキャラリスト: {ANIMAL_LIST} から一致するものを選び、以下のJSONフォーマットのみで返してください。
+                            {{"本質": "○○", "表面": "○○", "隠れ": "○○", "希望": "○○", "意思決定": "○○"}}
                             """
                             ai_json_str = ask_gemini(img_prompt, img_bytes, m_type)
                             try:
@@ -302,7 +292,50 @@ with main_tabs[1]:
         
         sub_tabs = st.tabs(["⏮️ 面接前（準備・占い・相性）", "⏺️ 面接中（リアルタイム）", "⏭️ 面接後（評価レポート）"])
         
+        # --- 子タブ1: 面接前 ---
         with sub_tabs[0]:
+            # 🛠️ 【マキコさん用・情報修正エクスパンダー大復活！】
+            with st.expander("📝 候補者の登録情報（名前・履歴・5アニマルなど）を修正・編集する"):
+                with st.form(f"edit_form_{c_id}"):
+                    st.subheader("基本情報の修正")
+                    edit_name = st.text_input("氏名", value=name)
+                    edit_univ = st.text_input("大学・所属", value=university)
+                    
+                    edit_birth_unknown = st.checkbox("生年月日が不明（占いをスキップ）", value=(birth_date == "不明"))
+                    try: default_b = datetime.strptime(birth_date, "%Y-%m-%d")
+                    except: default_b = datetime(2002, 1, 1)
+                    edit_birth = st.date_input("生年月日", value=default_b)
+                    
+                    edit_status = st.selectbox("ステータス", ["面接予定", "日程調整待ち", "合否連絡待ち", "長期間放置候補者"], index=["面接予定", "日程調整待ち", "合否連絡待ち", "長期間放置候補者"].index(status) if status in ["面接予定", "日程調整待ち", "合否連絡待ち", "長期間放置候補者"] else 0)
+                    edit_date = st.text_input("面接予定日時", value=interview_date or "")
+                    edit_bg = st.text_area("経歴・自己PR・事前情報", value=background_memo or "")
+                    
+                    st.write("**🔮 5アニマルの修正**")
+                    st.markdown("🔗 **[5アニマル診断はこちら（外部サイト）](https://www.doubutsu-uranai.com/uranai_chara_5animals.php)**")
+                    
+                    e_col1, e_col2, e_col3, e_col4, e_col5 = st.columns(5)
+                    with e_col1: e_honsitsu = st.selectbox("本質", ANIMAL_LIST, index=ANIMAL_LIST.index(c_fortune.get("本質", "未設定")))
+                    with e_col2: e_hyomen = st.selectbox("表面", ANIMAL_LIST, index=ANIMAL_LIST.index(c_fortune.get("表面", "未設定")))
+                    with e_col3: e_kakure = st.selectbox("隠れ", ANIMAL_LIST, index=ANIMAL_LIST.index(c_fortune.get("隠れ", "未設定")))
+                    with e_col4: e_kibo = st.selectbox("希望", ANIMAL_LIST, index=ANIMAL_LIST.index(c_fortune.get("希望", "未設定")))
+                    with e_col5: e_kettei = st.selectbox("意思決定", ANIMAL_LIST, index=ANIMAL_LIST.index(c_fortune.get("意思決定", "未設定")))
+                    
+                    if st.form_submit_button("修正内容を保存する（永久上書き）"):
+                        edit_birth_str = "不明" if edit_birth_unknown else str(edit_birth)
+                        new_animals_json = json.dumps({"本質": e_honsitsu, "表面": e_hyomen, "隠れ": e_kakure, "希望": e_kibo, "意思決定": e_kettei}, ensure_ascii=False)
+                        
+                        conn = get_db_connection()
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                        UPDATE candidates 
+                        SET name=%s, university=%s, birth_date=%s, status=%s, interview_date=%s, background_memo=%s, animals_json=%s
+                        WHERE id=%s
+                        """, (edit_name, edit_univ, edit_birth_str, edit_status, edit_date, edit_bg, new_animals_json, c_id))
+                        conn.commit()
+                        conn.close()
+                        st.success("変更内容を消えない倉庫にしっかりと保存しました！")
+                        st.rerun()
+
             col_info, col_fortune = st.columns(2)
             with col_info:
                 st.markdown(f"**氏名:** {name}  \n**所属:** {university}  \n**ステータス:** {status}  \n**面接日時:** {interview_date}  \n**生年月日:** {birth_date}")
@@ -370,6 +403,7 @@ with main_tabs[1]:
             
             if saved_pre_profile: st.info(saved_pre_profile)
 
+        # --- 子タブ2: 面接中 ---
         with sub_tabs[1]:
             display_memo = st.session_state.get(f"cached_memo_{c_id}", raw_memo)
             updated_memo = st.text_area("面接メモ（スクロールすると一番下に自動カンペがあります！）", value=display_memo, height=500, key=f"memo_{c_id}")
@@ -391,6 +425,7 @@ with main_tabs[1]:
                     prompt = f"以下メモから不足するビジネス適性項目を2つ選び、フランクな質問のセリフと150字の背景を出力して。\n{updated_memo}"
                     st.warning(ask_gemini(prompt))
 
+        # --- 子タブ3: 面接後 ---
         with sub_tabs[2]:
             if st.button("AIレポートを生成する"):
                 with st.spinner("生成中..."):

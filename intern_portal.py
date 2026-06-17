@@ -70,7 +70,7 @@ MEMO_TEMPLATE = """=========================================
 ・過去に仕事や学校で「自ら動いて頑張った」経験：
 ・好きな仕事：
 
-💡 [素真面目さ・継続力・フィードバック耐性]
+💡 [素直さ・継続力・フィードバック耐性]
 ・苦手な仕事（どう向き合うか）：
 ・周りからどんな性格と言われるか：
 
@@ -134,7 +134,6 @@ def calculate_numerology(birth_date_str):
         total = sum(int(d) for d in str(total))
     return f"{total}番"
 
-# 💡 画像認識にも対応した強力なGemini関数
 def ask_gemini(prompt_text, image_bytes=None, mime_type=None):
     if not api_key: return "APIキーが設定されていません。"
     models_to_try = [
@@ -165,7 +164,7 @@ def ask_gemini(prompt_text, image_bytes=None, mime_type=None):
 if "selected_candidate_id" not in st.session_state: st.session_state["selected_candidate_id"] = None
 
 # ==========================================
-# 3. Streamlit UI 構築 (大復活：綺麗な st.tabs のみに完全修復)
+# 3. Streamlit UI 構築 (綺麗な st.tabs のみに完全修復)
 # ==========================================
 main_tabs = st.tabs(["📋 候補者一覧・登録", "🔎 面接・評価（詳細画面）"])
 
@@ -185,10 +184,8 @@ with main_tabs[0]:
             
             st.divider()
             st.subheader("🔮 【2】5アニマル情報入力")
-            # 💡 動物占いのURL設置を元の目立つ場所に大復活！
             st.markdown("🔗 **[5アニマル診断はこちら（外部サイト）](https://www.doubutsu-uranai.com/uranai_chara_5animals.php)**")
             
-            # ✨ 【神機能】スクショ画像から自動入力するオプションを新設！
             st.markdown("📸 **【時短】スマホやPCでキャプチャした診断結果の画像を下に貼り付けると、AIが5キャラを自動で読み取って登録します！**")
             uploaded_file = st.file_uploader("ここにスクショ画像をドラッグ＆ドロップ、またはクリップボードからコピペ(Ctrl+V)", type=["png", "jpg", "jpeg"])
             
@@ -203,8 +200,8 @@ with main_tabs[0]:
             if st.form_submit_button("候補者を登録"):
                 if c_name:
                     birth_str = "不明" if is_birth_unknown else str(c_birth)
+                    animals_json = json.dumps({"本質": honsitsu, "表面": hyomen, "隠れ": kakure, "希望": kibo, "意思決定": kettei}, ensure_ascii=False)
                     
-                    # 画像が添付されている場合はGeminiに解析させる
                     if uploaded_file is not None:
                         with st.spinner("📷 AIがスクショから5アニマルを自動解読中..."):
                             img_bytes = uploaded_file.read()
@@ -227,17 +224,11 @@ with main_tabs[0]:
                             """
                             ai_json_str = ask_gemini(img_prompt, img_bytes, m_type)
                             try:
-                                # マークダウンのコードブロックを除去してクリーンなJSONにする
-                                clean_json = ai_json_str.replace("```json", "").replace("
-```", "").strip()
+                                clean_json = ai_json_str.replace("```json", "").replace("```", "").strip()
                                 animals_dict = json.loads(clean_json)
                                 animals_json = json.dumps(animals_dict, ensure_ascii=False)
-                                st.info(f"🔮 AI自動読み込み成功: {animals_dict}")
                             except:
-                                # 失敗した場合は手動側を採用
-                                animals_json = json.dumps({"本質": honsitsu, "表面": hyomen, "隠れ": kakure, "希望": kibo, "意思決定": kettei}, ensure_ascii=False)
-                    else:
-                        animals_json = json.dumps({"本質": honsitsu, "表面": hyomen, "隠れ": kakure, "希望": kibo, "意思決定": kettei}, ensure_ascii=False)
+                                pass
                     
                     conn = get_db_connection()
                     cursor = conn.cursor()
@@ -327,7 +318,6 @@ with main_tabs[1]:
                     my_fortune_str = ", ".join([f"{k}:{v}" for k, v in MY_PROFILE["five_animals"].items()])
                     c_fortune_str = ", ".join([f"{k}:{v}" for k, v in c_fortune.items()])
                     
-                    # 💡 【恋愛禁止】プロンプトを徹底的にビジネス・マネジメント視点へ完全補正！
                     prompt = f"""
                     あなたはプロの組織開発コンサルタント、および採用面接官です。
                     動物占い（5アニマル）と数秘術を「ビジネスのマネジメントと採用・組織運営」の視点から紐解き、プロファイルを行います。
